@@ -52,7 +52,13 @@ jobs:
           rm -rf node_modules
           npm ci
 
-      # 6. Clear stale native build caches (reanimated version mismatch fix)
+      # 6a. Generate native android/ folder (Expo managed project doesn't
+      #     commit this folder to git — it must be generated before gradlew exists)
+      - name: Expo prebuild (generate android project)
+        working-directory: apps/mobile
+        run: npx expo prebuild --platform android --clean
+
+      # 6b. Clear stale native build caches (reanimated version mismatch fix)
       - name: Clear native build caches
         run: |
           rm -rf apps/mobile/node_modules/react-native-reanimated/android/.cxx
