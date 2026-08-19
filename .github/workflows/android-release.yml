@@ -1,86 +1,90 @@
-name: Auto Bidder Android Release
+name: Build Android APK
 
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - main
-    tags:
-      - 'v*'
-
-permissions:
-  contents: read
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
   build:
-    name: Build Release APK
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      # 1. Repo checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      # 2. Node setup (React Native / Expo projects ke liye)
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: package-lock.json
+          node-version: '20'
+          cache: 'npm'
 
-      - name: Setup Java
+      # 3. Dependencies install
+      - name: Install dependencies
+        run: npm install
+
+      # 4. ===== YE MOST IMPORTANT STEP HAI =====
+      # Repo Secrets se .env file banao BUILD SE PEHLE
+      - name: Create .env file
+        run: |
+          echo "API_URL=${{ secrets.API_URL }}" >> .env
+          echo "FIREBASE_API_KEY=${{ secrets.FIREBASE_API_KEY }}" >> .env
+          echo "FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }}" >> .env
+          echo "APP_ENV=production" >> .env
+          cat .env
+
+      # 5. Java setup (Android build ke liye required)
+      - name: Setup JDK
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
+          distribution: 'temurin'
           java-version: '17'
-          cache: gradle
 
-      - name: Setup Android
+      # 6. Android build tools setup
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK
-        shell: bash
+      # 7. Gradle ko executable banao
+      - name: Grant execute permission for gradlew
+        run: chmod +x android/gradlew
+
+      # 8. APK build karo (.env values ab available hain)
+      - name: Build Release APK
         run: |
-          yes | sdkmanager --licenses || true
-          sdkmanager "platform-tools"
-          sdkmanager "platforms;android-36"
-          sdkmanager "build-tools;36.0.0"
-          sdkmanager "ndk;26.1.10909125"
+          cd android
+          ./gradlew assembleRelease
 
-      - name: Install dependencies
-        run: npm install --include=dev
-
-      - name: Check patch-package
-        run: npx patch-package --version
-
-      - name: Check Expo
-        run: npx expo --version
-
-      - name: Generate Android
-        working-directory: apps/mobile
-        run: npx expo prebuild --platform android --clean
-
-      - name: Make Gradle executable
-        working-directory: apps/mobile/android
-        run: chmod +x gradlew
-
-      - name: Clean Gradle
-        working-directory: apps/mobile/android
-        run: ./gradlew clean --no-daemon --max-workers=2
-
-      - name: Build APK
-        working-directory: apps/mobile/android
-        run: ./gradlew assembleRelease --no-daemon --max-workers=2 --stacktrace
-
-      - name: Check APK
-        run: |
-          test -f apps/mobile/android/app/build/outputs/apk/release/app-release.apk
-          ls -lh apps/mobile/android/app/build/outputs/apk/release/app-release.apk
-
+      # 9. APK ko artifact ke roop mein upload karo taaki download kar sako
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: auto-bidder-release-apk
-          path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
-          if-no-files-found: error
-          retention-days: 14
+          name: app-release
+          path: android/app/build/outputs/apk/release/app-release.apk
+
+# ============================================
+# ZAROORI SETUP (workflow chalane se pehle):
+# ============================================
+# 1. GitHub repo > Settings > Secrets and variables > Actions
+# 2. "New repository secret" click karke ye add karein:
+#    - API_URL
+#    - FIREBASE_API_KEY
+#    - FIREBASE_PROJECT_ID
+#    (jo bhi aapke .env mein variables hain, wahi naam use karein)
+#
+# 3. Apne app code mein check karein ki env vars kaise read
+#    ho rahe hain (react-native-config, react-native-dotenv,
+#    ya process.env). Framework ke hisaab se variable
+#    naming convention different ho sakta hai:
+#    - Expo:              EXPO_PUBLIC_API_URL
+#    - react-native-config: sab .env mein as-is
+#    - Vite/Web builds:    VITE_API_URL
+#
+# 4. Agar "Configuration - missing production env
+#    variables" error abhi bhi aaye, toh app ke andar
+#    us jagah check karein jahan ye validation ho rahi
+#    hai (usually App.js / config.js / env.ts mein) aur
+#    dekhein exactly kaunsa variable name expect kiya
+#    ja raha hai — us naam se hi secret aur .env line
+#    match honi chahiye.
