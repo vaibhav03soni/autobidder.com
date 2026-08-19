@@ -1,5 +1,4 @@
-```yaml
-name: Build Auto Bidder Android APK
+name: Build Android APK
 
 on:
   workflow_dispatch:
@@ -9,112 +8,75 @@ on:
 
 jobs:
   build:
-    name: Build Release APK
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-
-    env:
-      NODE_OPTIONS: "--max-old-space-size=4096"
-      GRADLE_OPTS: "-Xmx6144m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8"
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
+      # 1. Repo checkout
+      - name: Checkout code
+        uses: actions/checkout@v4
 
+      # 2. Node setup
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
+          node-version: 20
 
-      - name: Setup Java 17
-        uses: actions/setup-java@v5
+      # 3. Java setup (required for Android/Gradle build)
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: "17"
+          distribution: 'temurin'
+          java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
-
-      - name: Check Environment
+      # 4. IMPORTANT: Create .env file from GitHub Secrets
+      # -> Yahi step "Configuration" wala error fix karega,
+      #    kyunki app ko production env variables mil jayenge build ke time.
+      # -> Repo Settings > Secrets and variables > Actions me ye 2 secrets add karo:
+      #      EXPO_PUBLIC_API_BASE_URL
+      #      EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY
+      - name: Create .env file (apps/mobile)
+        working-directory: apps/mobile
         run: |
-          node --version
-          npm --version
-          java -version
-          free -h
-
-      - name: Install Dependencies
-        run: npm ci --no-audit --no-fund
-
-      - name: Check Expo
-        run: npx expo --version
-
-      - name: Generate Android Project
-        run: npx expo prebuild --platform android --no-install
-
-      - name: Configure Gradle Memory
-        run: |
-          cat >> android/gradle.properties <<'EOF'
-
-          org.gradle.jvmargs=-Xmx6144m -XX:MaxMetaspaceSize=1024m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8
-          org.gradle.daemon=false
-          org.gradle.parallel=false
-          org.gradle.workers.max=2
-          org.gradle.caching=true
+          cat <<EOF > .env
+          EXPO_PUBLIC_API_BASE_URL=${{ secrets.EXPO_PUBLIC_API_BASE_URL }}
+          EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ secrets.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
           EOF
+          echo ".env file created:"
+          cat .env | sed 's/=.*/=****/'   # values ko hide karke print karo (safety)
 
-      - name: Make Gradle Executable
-        run: chmod +x android/gradlew
-
-      - name: Verify Gradle
-        working-directory: android
-        run: ./gradlew --version
-
-      - name: Clean Android
-        working-directory: android
-        run: ./gradlew clean --no-daemon --max-workers=2
-
-      - name: Build Release APK
-        working-directory: android
+      # 5. Clean install to avoid stale/duplicate package issues
+      # NOTE: ye monorepo hai (apps/mobile, services/api), isliye root se
+      #       npm ci chalao taaki workspaces sahi se install hon.
+      - name: Install dependencies (clean)
         run: |
-          export NODE_OPTIONS="--max-old-space-size=4096"
-          ./gradlew assembleRelease \
-            --no-daemon \
-            --max-workers=2 \
-            --stacktrace \
-            --info
+          rm -rf node_modules
+          npm ci
 
-      - name: Verify APK
+      # 6. Clear stale native build caches (reanimated version mismatch fix)
+      - name: Clear native build caches
         run: |
-          echo "APK files:"
-          find android/app/build/outputs/apk/release -type f -name "*.apk" -print
+          rm -rf apps/mobile/node_modules/react-native-reanimated/android/.cxx
+          rm -rf apps/mobile/android/app/.cxx
+          rm -rf ~/.gradle/caches
 
-          APK=$(find android/app/build/outputs/apk/release -type f -name "*.apk" -print -quit)
+      # 7. Make gradlew executable
+      - name: Grant execute permission for gradlew
+        working-directory: apps/mobile/android
+        run: chmod +x gradlew
 
-          if [ -z "$APK" ]; then
-            echo "ERROR: APK was not generated"
-            exit 1
-          fi
+      # 8. Clean previous android build
+      - name: Clean Android build
+        working-directory: apps/mobile/android
+        run: ./gradlew clean
 
-          echo "APK generated successfully:"
-          ls -lh "$APK"
+      # 9. Build the release APK
+      - name: Build APK
+        working-directory: apps/mobile/android
+        run: ./gradlew assembleRelease --no-daemon
 
+      # 10. Upload APK as workflow artifact
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: auto-bidder-release-apk
-          path: android/app/build/outputs/apk/release/*.apk
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload Build Reports
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: auto-bidder-build-reports
-          path: |
-            android/build/reports/**
-            android/app/build/reports/**
-          if-no-files-found: ignore
-          retention-days: 7
-```
+          name: app-release
+          path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
