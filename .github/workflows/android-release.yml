@@ -8,13 +8,12 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       # 1. Repo checkout
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. Node setup (React Native / Expo projects ke liye)
+      # 2. Node setup
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -25,38 +24,55 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      # 4. ===== YE MOST IMPORTANT STEP HAI =====
-      # Repo Secrets se .env file banao BUILD SE PEHLE
+      # 4. ===== DIAGNOSTIC STEP: reanimated duplicate version check =====
+      # Ye batayega agar reanimated ke multiple/conflicting versions
+      # node_modules mein hain — jo aapke C++ build error ka root cause hai
+      - name: Check for duplicate reanimated versions
+        run: |
+          echo "----- react-native-reanimated versions found -----"
+          npm ls react-native-reanimated || true
+          echo "----------------------------------------------------"
+
+      # 5. ===== ENV FILE: sahi Expo naming convention ke saath =====
+      # EXPO_PUBLIC_ prefix wale vars automatically JS bundle mein
+      # baked ho jaate hain agar Expo/Metro use ho raha hai
       - name: Create .env file
         run: |
-          echo "API_URL=${{ secrets.API_URL }}" >> .env
-          echo "FIREBASE_API_KEY=${{ secrets.FIREBASE_API_KEY }}" >> .env
-          echo "FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }}" >> .env
-          echo "APP_ENV=production" >> .env
-          cat .env
+          echo "EXPO_PUBLIC_API_BASE_URL=${{ secrets.EXPO_PUBLIC_API_BASE_URL }}" >> .env
+          echo "EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ secrets.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY }}" >> .env
+          echo ".env file created with keys:"
+          cat .env | sed 's/=.*/=[HIDDEN]/'
 
-      # 5. Java setup (Android build ke liye required)
+      # 6. Java setup
       - name: Setup JDK
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      # 6. Android build tools setup
+      # 7. Android SDK setup
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      # 7. Gradle ko executable banao
+      # 8. Gradle executable permission
       - name: Grant execute permission for gradlew
         run: chmod +x android/gradlew
 
-      # 8. APK build karo (.env values ab available hain)
+      # 9. Clean build cache (agar pichli run se corrupted CMake/Ninja cache bacha ho)
+      - name: Clean previous native build cache
+        run: |
+          cd android
+          ./gradlew clean
+          rm -rf app/.cxx
+          rm -rf ../node_modules/react-native-reanimated/android/.cxx
+
+      # 10. APK build
       - name: Build Release APK
         run: |
           cd android
-          ./gradlew assembleRelease
+          ./gradlew assembleRelease --stacktrace
 
-      # 9. APK ko artifact ke roop mein upload karo taaki download kar sako
+      # 11. Upload APK
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
@@ -66,25 +82,30 @@ jobs:
 # ============================================
 # ZAROORI SETUP (workflow chalane se pehle):
 # ============================================
-# 1. GitHub repo > Settings > Secrets and variables > Actions
-# 2. "New repository secret" click karke ye add karein:
-#    - API_URL
-#    - FIREBASE_API_KEY
-#    - FIREBASE_PROJECT_ID
-#    (jo bhi aapke .env mein variables hain, wahi naam use karein)
+# 1. GitHub Secrets already sahi hain (confirm ho chuka):
+#    - EXPO_PUBLIC_API_BASE_URL
+#    - EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY
 #
-# 3. Apne app code mein check karein ki env vars kaise read
-#    ho rahe hain (react-native-config, react-native-dotenv,
-#    ya process.env). Framework ke hisaab se variable
-#    naming convention different ho sakta hai:
-#    - Expo:              EXPO_PUBLIC_API_URL
-#    - react-native-config: sab .env mein as-is
-#    - Vite/Web builds:    VITE_API_URL
+# 2. REANIMATED BUILD ERROR FIX (root cause):
+#    Aapke build log mein ye error tha:
+#      "type constraint differs in template redeclaration"
+#      "use of undeclared identifier 'getResolvableValueContext'"
+#    Ye tab hota hai jab react-native-reanimated ke DO ALAG
+#    versions node_modules mein exist karte hain (ek header file
+#    purani hai, .cpp file nayi) - kisi dusre package (jaise koi
+#    UI library) ne apna khud ka reanimated version bundle kar
+#    rakha hai.
 #
-# 4. Agar "Configuration - missing production env
-#    variables" error abhi bhi aaye, toh app ke andar
-#    us jagah check karein jahan ye validation ho rahi
-#    hai (usually App.js / config.js / env.ts mein) aur
-#    dekhein exactly kaunsa variable name expect kiya
-#    ja raha hai — us naam se hi secret aur .env line
-#    match honi chahiye.
+#    Step 4 (upar) ka output dekhein - agar "npm ls" mein
+#    react-native-reanimated ke multiple version numbers dikhein,
+#    to apne package.json mein ye add karein:
+#
+#    "overrides": {
+#      "react-native-reanimated": "<aapka desired version>"
+#    }
+#
+#    Phir commit karke workflow re-run karein.
+#
+# 3. Agar sirf ek version dikhta hai (no duplicate), to reanimated
+#    ko RN/Expo SDK ke saath compatible version par upgrade/downgrade
+#    karein - "npx expo install --check" command locally chalayein.
