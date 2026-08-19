@@ -1,13 +1,15 @@
 name: Build Android APK
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       # 1. Repo checkout
       - name: Checkout code
@@ -17,95 +19,64 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: 20
 
-      # 3. Dependencies install
-      - name: Install dependencies
-        run: npm install
-
-      # 4. ===== DIAGNOSTIC STEP: reanimated duplicate version check =====
-      # Ye batayega agar reanimated ke multiple/conflicting versions
-      # node_modules mein hain — jo aapke C++ build error ka root cause hai
-      - name: Check for duplicate reanimated versions
-        run: |
-          echo "----- react-native-reanimated versions found -----"
-          npm ls react-native-reanimated || true
-          echo "----------------------------------------------------"
-
-      # 5. ===== ENV FILE: sahi Expo naming convention ke saath =====
-      # EXPO_PUBLIC_ prefix wale vars automatically JS bundle mein
-      # baked ho jaate hain agar Expo/Metro use ho raha hai
-      - name: Create .env file
-        run: |
-          echo "EXPO_PUBLIC_API_BASE_URL=${{ secrets.EXPO_PUBLIC_API_BASE_URL }}" >> .env
-          echo "EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ secrets.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY }}" >> .env
-          echo ".env file created with keys:"
-          cat .env | sed 's/=.*/=[HIDDEN]/'
-
-      # 6. Java setup
-      - name: Setup JDK
+      # 3. Java setup (required for Android/Gradle build)
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      # 7. Android SDK setup
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      # 4. IMPORTANT: Create .env file from GitHub Secrets
+      # -> Yahi step "Configuration" wala error fix karega,
+      #    kyunki app ko production env variables mil jayenge build ke time.
+      # -> Repo Settings > Secrets and variables > Actions me ye secrets add karo
+      #    apne app ke actual variable names ke hisaab se.
+      - name: Create .env file
+        run: |
+          cat <<EOF > .env
+          API_URL=${{ secrets.API_URL }}
+          APP_ENV=production
+          FIREBASE_API_KEY=${{ secrets.FIREBASE_API_KEY }}
+          SUPABASE_URL=${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
+          EOF
+          echo ".env file created:"
+          cat .env | sed 's/=.*/=****/'   # values ko hide karke print karo (safety)
 
-      # 8. Gradle executable permission
+      # 5. Clean install to avoid stale/duplicate package issues
+      - name: Install dependencies (clean)
+        run: |
+          rm -rf node_modules
+          npm ci
+
+      # 6. Clear stale native build caches (reanimated version mismatch fix)
+      - name: Clear native build caches
+        run: |
+          rm -rf node_modules/react-native-reanimated/android/.cxx
+          rm -rf android/app/.cxx
+          rm -rf ~/.gradle/caches
+
+      # 7. Make gradlew executable
       - name: Grant execute permission for gradlew
         run: chmod +x android/gradlew
 
-      # 9. Clean build cache (agar pichli run se corrupted CMake/Ninja cache bacha ho)
-      - name: Clean previous native build cache
+      # 8. Clean previous android build
+      - name: Clean Android build
         run: |
           cd android
           ./gradlew clean
-          rm -rf app/.cxx
-          rm -rf ../node_modules/react-native-reanimated/android/.cxx
 
-      # 10. APK build
-      - name: Build Release APK
+      # 9. Build the release APK
+      - name: Build APK
         run: |
           cd android
-          ./gradlew assembleRelease --stacktrace
+          ./gradlew assembleRelease --no-daemon
 
-      # 11. Upload APK
+      # 10. Upload APK as workflow artifact
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: app-release
           path: android/app/build/outputs/apk/release/app-release.apk
-
-# ============================================
-# ZAROORI SETUP (workflow chalane se pehle):
-# ============================================
-# 1. GitHub Secrets already sahi hain (confirm ho chuka):
-#    - EXPO_PUBLIC_API_BASE_URL
-#    - EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY
-#
-# 2. REANIMATED BUILD ERROR FIX (root cause):
-#    Aapke build log mein ye error tha:
-#      "type constraint differs in template redeclaration"
-#      "use of undeclared identifier 'getResolvableValueContext'"
-#    Ye tab hota hai jab react-native-reanimated ke DO ALAG
-#    versions node_modules mein exist karte hain (ek header file
-#    purani hai, .cpp file nayi) - kisi dusre package (jaise koi
-#    UI library) ne apna khud ka reanimated version bundle kar
-#    rakha hai.
-#
-#    Step 4 (upar) ka output dekhein - agar "npm ls" mein
-#    react-native-reanimated ke multiple version numbers dikhein,
-#    to apne package.json mein ye add karein:
-#
-#    "overrides": {
-#      "react-native-reanimated": "<aapka desired version>"
-#    }
-#
-#    Phir commit karke workflow re-run karein.
-#
-# 3. Agar sirf ek version dikhta hai (no duplicate), to reanimated
-#    ko RN/Expo SDK ke saath compatible version par upgrade/downgrade
-#    karein - "npx expo install --check" command locally chalayein.
