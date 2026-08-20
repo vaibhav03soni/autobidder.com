@@ -1,15 +1,13 @@
 name: Build Android APK
-
 on:
   workflow_dispatch:
   push:
     branches:
       - main
-
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    # environment: production   # <-- UNCOMMENT karo agar secrets kisi environment ke andar hain
     steps:
       # 1. Repo checkout
       - name: Checkout code
@@ -21,19 +19,14 @@ jobs:
         with:
           node-version: 20
 
-      # 3. Java setup (required for Android/Gradle build)
+      # 3. Java setup
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      # 4. IMPORTANT: Create .env file from GitHub Secrets
-      # -> Yahi step "Configuration" wala error fix karega,
-      #    kyunki app ko production env variables mil jayenge build ke time.
-      # -> Repo Settings > Secrets and variables > Actions me ye 2 secrets add karo:
-      #      EXPO_PUBLIC_API_BASE_URL
-      #      EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY
+      # 4. Create .env file from GitHub Secrets
       - name: Create .env file (apps/mobile)
         working-directory: apps/mobile
         run: |
@@ -41,46 +34,59 @@ jobs:
           EXPO_PUBLIC_API_BASE_URL=${{ secrets.EXPO_PUBLIC_API_BASE_URL }}
           EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ secrets.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
           EOF
-          echo ".env file created:"
-          cat .env | sed 's/=.*/=****/'   # values ko hide karke print karo (safety)
 
-      # 5. Clean install to avoid stale/duplicate package issues
-      # NOTE: ye monorepo hai (apps/mobile, services/api), isliye root se
-      #       npm ci chalao taaki workspaces sahi se install hon.
+      # 5. VERIFY secrets actually loaded (fails build early if empty — better than silent APK failure)
+      - name: Verify env values are not empty
+        working-directory: apps/mobile
+        run: |
+          set -e
+          if [ -z "${{ secrets.EXPO_PUBLIC_API_BASE_URL }}" ]; then
+            echo "❌ EXPO_PUBLIC_API_BASE_URL is EMPTY — check repo secrets"
+            exit 1
+          fi
+          if [ -z "${{ secrets.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY }}" ]; then
+            echo "❌ EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY is EMPTY — check repo secrets"
+            exit 1
+          fi
+          echo "✅ Both secrets present and non-empty"
+
+      # 6. Clean install
       - name: Install dependencies (clean)
         run: |
           rm -rf node_modules
           npm ci
 
-      # 6a. Generate native android/ folder (Expo managed project doesn't
-      #     commit this folder to git — it must be generated before gradlew exists)
+      # 7. Expo prebuild
       - name: Expo prebuild (generate android project)
         working-directory: apps/mobile
         run: npx expo prebuild --platform android --clean
 
-      # 6b. Clear stale native build caches (reanimated version mismatch fix)
+      # 8. Clear stale native build caches
       - name: Clear native build caches
         run: |
           rm -rf apps/mobile/node_modules/react-native-reanimated/android/.cxx
           rm -rf apps/mobile/android/app/.cxx
           rm -rf ~/.gradle/caches
 
-      # 7. Make gradlew executable
+      # 9. Make gradlew executable
       - name: Grant execute permission for gradlew
         working-directory: apps/mobile/android
         run: chmod +x gradlew
 
-      # 8. Clean previous android build
+      # 10. Clean previous android build
       - name: Clean Android build
         working-directory: apps/mobile/android
         run: ./gradlew clean
 
-      # 9. Build the release APK
+      # 11. Build release APK — env passed BOTH via .env AND shell env (belt-and-suspenders)
       - name: Build APK
         working-directory: apps/mobile/android
+        env:
+          EXPO_PUBLIC_API_BASE_URL: ${{ secrets.EXPO_PUBLIC_API_BASE_URL }}
+          EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ secrets.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
         run: ./gradlew assembleRelease --no-daemon
 
-      # 10. Upload APK as workflow artifact
+      # 12. Upload APK
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
