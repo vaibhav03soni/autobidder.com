@@ -1,57 +1,67 @@
-{
-  "expo": {
-    "name": "Auto Bidder",
-    "slug": "auto-bidder-mobile",
-    "scheme": "auto-bidder",
-    "version": "1.0.0",
-    "description": "AutoBidder - Premium Car Auction Marketplace",
-    "owner": "autobidder",
-    "orientation": "portrait",
-    "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
-    "updates": {
-      "fallbackToCacheTimeout": 0
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '.env') });
+
+module.exports = {
+  expo: {
+    name: "Auto Bidder",
+    slug: "auto-bidder-mobile",
+    scheme: "auto-bidder",
+    version: "1.0.0",
+    description: "AutoBidder - Premium Car Auction Marketplace",
+    owner: "autobidder",
+    orientation: "portrait",
+    icon: "./assets/icon.png",
+    userInterfaceStyle: "light",
+    updates: {
+      fallbackToCacheTimeout: 0
     },
-    "assetBundlePatterns": [
+    assetBundlePatterns: [
       "**/*"
     ],
-    "runtimeVersion": {
-      "policy": "appVersion"
+    runtimeVersion: {
+      policy: "appVersion"
     },
-    "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.autobidder.mobile",
-      "associatedDomains": [
+    ios: {
+      supportsTablet: true,
+      bundleIdentifier: "com.autobidder.mobile",
+      associatedDomains: [
         "applinks:api.autobidder.in"
       ]
     },
-    "web": {
-      "favicon": "./assets/favicon.png"
+    web: {
+      favicon: "./assets/favicon.png"
     },
-    "android": {
-      "package": "com.autobidder.mobile",
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+    android: {
+      package: "com.autobidder.mobile",
+      adaptiveIcon: {
+        foregroundImage: "./assets/adaptive-icon.png",
+        backgroundColor: "#ffffff"
       }
     },
-    "plugins": [
+    plugins: [
       "expo-notifications",
       "expo-dev-client",
       [
         "expo-build-properties",
         {
-          "android": {
-            "newArchEnabled": false,
-            "minSdkVersion": 24,
-            "targetSdkVersion": 36,
-            "compileSdkVersion": 36,
-            "ndkVersion": "26.1.10909125"
+          android: {
+            newArchEnabled: false,
+            minSdkVersion: 24,
+            targetSdkVersion: 36,
+            compileSdkVersion: 36,
+            ndkVersion: "26.1.10909125"
           }
         }
       ],
       "expo-sharing",
       "expo-video"
-    ]
+    ],
+    // THIS is the piece that was completely missing from app.json.
+    // Without it, Constants.expoConfig.extra is undefined no matter
+    // what the .env file or GitHub Secrets contain.
+    extra: {
+      apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL,
+      stripePublishableKey: process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY,
+    }
   }
-}
+};
