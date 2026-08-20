@@ -4,8 +4,17 @@ const path = require('path');
 const projectRoot = __dirname;
 const workspaceRoot = path.resolve(__dirname, '../..');
 
+// EXPLICIT env loading — CWD-independent, monorepo-safe.
+// getDefaultConfig's built-in @expo/env auto-loading relies on process.cwd(),
+// which is unreliable when Gradle spawns the Metro bundler from a different
+// working directory (e.g. apps/mobile/android). This guarantees .env is
+// always read from the correct path regardless of how bundling was triggered.
+require('dotenv').config({ path: path.resolve(projectRoot, '.env') });
+
 console.log('METRO CONFIG: projectRoot =', projectRoot);
 console.log('METRO CONFIG: workspaceRoot =', workspaceRoot);
+console.log('METRO CONFIG: EXPO_PUBLIC_API_BASE_URL loaded =', !!process.env.EXPO_PUBLIC_API_BASE_URL);
+console.log('METRO CONFIG: EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY loaded =', !!process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY);
 
 const config = getDefaultConfig(projectRoot);
 
@@ -14,6 +23,7 @@ config.transformer = {
   ...config.transformer,
   babelTransformerPath: require.resolve('react-native-svg-transformer'),
 };
+
 config.resolver = {
   ...config.resolver,
   assetExts: config.resolver.assetExts.filter((ext) => ext !== 'svg'),
@@ -46,13 +56,11 @@ config.resolver.extraNodeModules = {
 
 // 4. Force Metro to resolve React and other core packages from the workspace root node_modules
 const corePackages = ['react', 'react-dom', 'react-native', 'react-native-web', 'expo', '@expo/metro-runtime', 'react-native-worklets', 'react-native-reanimated'];
-
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   // For web, let Expo handle react-native -> react-native-web aliasing
   if (platform === 'web' && (moduleName === 'react-native' || moduleName.startsWith('react-native/'))) {
     return context.resolveRequest(context, moduleName, platform);
   }
-
   const pkgName = corePackages.find(pkg => moduleName === pkg || moduleName.startsWith(`${pkg}/`));
   if (pkgName) {
     try {
